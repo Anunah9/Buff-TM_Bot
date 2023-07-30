@@ -1,0 +1,1 @@
+sqlite3 sell_history_for_writ.db ".recover" | sqlite3 sell_history.db

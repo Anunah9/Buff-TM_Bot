@@ -1,0 +1,5 @@
+.idea
+mylog.log
+/venv/
+src/db/sell_history.db
+utils/__pycache__
