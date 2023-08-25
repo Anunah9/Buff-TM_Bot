@@ -1,16 +1,15 @@
 import datetime
 import random
 import sqlite3
-import statistics
 import threading
 import time
-import numpy as np
 import telebot
 from pycbrf.toolbox import ExchangeRates
 import requests
 from os import path
 from utils import Database
 from urllib.parse import quote
+from AutoBuyItems import BuffBuyMethods
 
 
 def convert_item_name_to_url(name):
@@ -147,6 +146,9 @@ def main(item):
         return False
     print(message)
     bot.send_photo(368333609, buff_img, caption=message)
+    buff_acc.buy_first_item(buff_link)
+    buff_acc.already_buy += price_buff
+
     # bot.send_photo(1178860614, buff_img, caption=message)
     while check != 0:
         time.sleep(5)
@@ -163,19 +165,35 @@ if __name__ == '__main__':
     db_TM = Database.DatabaseTM()  # Обновляет базу данных ТМ при первом запуске
     db_TM.full_update_db()
 
-    max_limit_price = 100000
+    buff_acc = BuffBuyMethods()
+
+    buff_acc.balance = 5000
+    buff_acc.already_buy = 0
+
+    max_limit_price = 600
     min_limit_price = 200
     min_limit_count = 30
     min_volatility = 4
-    min_profit = 19
-    balance_commission = 0.06  # Процент денег потерянных при пополнении баланса
+    min_profit = 12
+    balance_commission = 0.03  # Процент денег потерянных при пополнении баланса
 
     start = 0
 
     k = start  # Номер предмета в бд
-    for i in items_from_db[start::]:
-        print(f'Предмет {k} из {len(items_from_db)}')
-        k += 1
-        if not main(i):
-            continue
+    try:
+        for i in items_from_db[start::]:
+            print(f'Предмет {k} из {len(items_from_db)}')
+            k += 1
+            if buff_acc.already_buy >= buff_acc.balance:
+                bot.send_message(368333609, f'Закупился на {buff_acc.already_buy}')
+                break
+
+            if not main(i):
+                continue
+    except Exception as exc:
+        raise Exception
+    finally:
+        buff_acc.driver.close()
+        buff_acc.driver.quit()
+
 

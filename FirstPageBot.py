@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import datetime
-import sqlite3
 import sqlite3 as sql
 import statistics
 import threading
 import time
+from os import path
+from urllib.parse import quote
+
 from pycbrf.toolbox import ExchangeRates
 import numpy as np
 import requests
@@ -85,6 +87,11 @@ def get_TM_price(market_hash_name):
     return db_TM.get_min_price(market_hash_name)
 
 
+def convert_item_name_to_url(name):
+    # Используем функцию quote для кодирования имени в URL-формат
+    return quote(name)
+
+
 def convert_price_to_RUB(price):
     today = str(datetime.datetime.today().date())
     exchange_rate = float(ExchangeRates(today)['CNY'].value)
@@ -109,7 +116,8 @@ def main_sleep():
 
 def main():
     global check
-    items_from_buff_old = history[0]
+    items_from_buff_old = history
+    print(items_from_buff_old)
     items_from_buff = catch_data_from_buff()
     print(items_from_buff)
     history.clear()
@@ -120,34 +128,76 @@ def main():
         if item in items_from_buff_old:
             items_from_buff.remove(item)
     for item in items_from_buff:
+
         market_hash_name = item['market_hash_name']
-        price_buff = convert_price_to_RUB(float(item.get("quick_price")) / 10)
+        price_buff = convert_price_to_RUB(float(item.get("quick_price")))
         id_buff = item.get('id')
         buff_link = f'https://buff.163.com/goods/{id_buff}'
         buff_img = item.get('goods_info').get("icon_url")
-        price_tm = get_TM_price(item)
-        tm_url = f'https://market.csgo.com/ru/'
 
-        if market_hash_name is None or mid_price is None:
+        price_tm = db_TM.get_min_price(market_hash_name)
+        if price_tm:
+            price_tm = price_tm[0] / 100
+        else:
             continue
-        if int(price_tm) > 15000 or int(count_sell) < 15 or int(price_tm) < 300 or price_buff == 0:
+
+        if price_tm < min_limit_price or max_limit_price < price_tm:
             continue
-        profit, profit_middle = check_profit(price_buff, price_tm, mid_price)
-        message = f"{market_hash_name}\n" \
-                  f"Цена на Buff: {price_buff}\n" \
-                  f"Цена на TM(без комиссии): {price_tm}\n" \
-                  f"Цена на TM: {price_tm * 0.9}\n" \
-                  f"Средняя цена(Без коммиссии): {mid_price}\n" \
-                  f"Средняя цена: {mid_price * 0.9}\n" \
-                  f"Количество продаж(моя статистика): {count_sell}\n" \
-                  f"Ссылка на Buff: {buff_link}\n" \
-                  f"ССылка на ТМ: {tm_url}\n" \
-                  f"Профит: {round(profit)}%\n" \
-                  f"Профит к средней цене: {round(profit_middle)}%"
+
+        price_history = Database.PriceHistory(market_hash_name, db_statistic_path + 'sell_history.db', 7)
+
+        if len(price_history.price_history) <= 1:
+            continue
+        price_history.delete_anomalies()
+
+        avg_price, count_sell = price_history.get_middle_price_and_count()
+        if count_sell < min_limit_count:
+            continue
+
+        volatility = price_history.get_price_volatility()
+        if not volatility:
+            volatility_value = 0
+        else:
+            volatility_value = sum(volatility)
+        tm_url = f'https://market.csgo.com/ru/{convert_item_name_to_url(market_hash_name)}'
+
+        if market_hash_name is None or avg_price is None:
+            continue
+        if int(price_tm) > max_limit_price or int(count_sell) < min_limit_count or int(price_tm) < min_limit_price:
+            continue
+        profit, profit_middle = check_profit(price_buff, price_tm, avg_price)
+        # message = f"{market_hash_name}\n" \
+        #           f"Цена на Buff: {price_buff}\n" \
+        #           f"Цена на TM(без комиссии): {price_tm}\n" \
+        #           f"Цена на TM: {price_tm * 0.9}\n" \
+        #           f"Средняя цена(Без коммиссии): {avg_price}\n" \
+        #           f"Средняя цена: {avg_price * 0.9}\n" \
+        #           f"Количество продаж(моя статистика): {count_sell}\n" \
+        #           f"Волатильность: {volatility_value}\n" \
+        #           f"Ссылка на Buff: {buff_link}\n" \
+        #           f"Ссылка на ТМ: {tm_url}\n" \
+        #           f"Профит: {round(profit)}%\n" \
+        #           f"Профит к средней цене: {round(profit_middle)}%"
+        message = f"Название предмета: {market_hash_name}\n" \
+                  f"Цены:\n" \
+                  f"- Цена на Buff: {price_buff:.2f} (без комиссии)\n" \
+                  f"- Цена на ТМ: {price_tm:.2f} (с учетом комиссии)\n" \
+                  f"- Средняя цена на TM: {avg_price:.2f} (без комиссии)\n" \
+                  f"- Средняя цена на ТМ: {avg_price * 0.9:.2f} (с учетом комиссии)\n" \
+                  f"\nСтатистика:\n" \
+                  f"- Количество продаж (по вашей статистике): {count_sell}\n" \
+                  f"- Волатильность: {volatility_value}\n" \
+                  f"\nПрофит:\n" \
+                  f"- Профит: {round(profit)}% (разница между покупной и продажной ценами)\n" \
+                  f"- Профит к средней цене: {round(profit_middle)}% (разница между покупной и средней ценами)\n" \
+                  f"\nСсылки:\n" \
+                  f"- Ссылка на Buff: {buff_link}\n" \
+                  f"- Ссылка на ТМ: {tm_url}"
+
         print(message)
-        if profit > 15 and profit_middle > 15 or profit > 200:
+        print('--------------------------------------------------')
+        if profit > min_profit or profit > 200:
             bot.send_photo(368333609, buff_img, caption=message)
-            bot.send_photo(1178860614, buff_img, caption=message)
         while check != 0:
             time.sleep(5)
     history.append(items_from_buff)
@@ -163,6 +213,15 @@ if __name__ == "__main__":
     timer.start()
     global items_from_buff_old
     history = [[]]
+
+    db_statistic_path = path.join(path.curdir, 'src', 'db') + path.sep
+
+    max_limit_price = 100000
+    min_limit_price = 200
+    min_limit_count = 30
+    min_volatility = 4
+    min_profit = 19
+
     while True:
         main()
         time.sleep(3)
